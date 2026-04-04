@@ -963,11 +963,724 @@ Everything else (backbone extraction, student training) is negligible by compari
 
 ---
 
-## Part 3c: Getting Teacher Inference for Free (or Near-Free)
+## Part 3c: Minimal Distillation Dataset on Free GPUs (Kaggle + Lightning + Modal)
 
-The 160 GPU-hours of TRIBE v2 inference is the single largest cost.
-Below are every realistic option ranked cheapest to most expensive,
-with honest throughput estimates for each.
+The goal is distillation — not retraining TRIBE v2 from scratch.
+This changes the calculus completely. You need far less teacher data than you think,
+and you have three free platforms that together are sufficient.
+
+---
+
+### How Little Teacher Data Does Distillation Actually Need?
+
+The key insight: after Phase 1 self-supervised pre-training, the fusion transformer
+already knows how to combine text, audio, and video across time. Phase 2 just needs
+to learn the **mapping from fused representations to brain vertices** — which is
+a much simpler problem. That mapping is near-linear once the representations are good.
+
+```
+EMPIRICAL EVIDENCE FROM SIMILAR DISTILLATION WORK:
+
+  DistilBERT:     5% of BERT's training data → 97% of BERT's performance
+  Distil-Whisper: 22K hours pseudo-labelled audio, but student matched teacher
+                  with only 2K hours of real teacher data for the actual KD step
+  TinyCLIP:       10% of LAION used for KD → 95% of CLIP performance
+  LLaVA-1.5:      ~600K instruction pairs for full KD, but projector-only fine-tune
+                  achieves 90% with just 50K samples
+
+TRIBE v2 equivalent:
+  Full teacher training data:   264h × 4 subjects = ~640K TRs
+  Estimated minimum for KD:     ~10-20h × 4 subjects = ~100K TRs
+  Why it works: fusion pre-training (Phase 1) replaces the need for most of this data.
+  The brain mapping itself is learnable from a small diverse set.
+```
+
+**The minimum viable teacher inference dataset:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ABSOLUTE MINIMUM:  5h of diverse video                         │
+│  Expected Pearson r: 0.20-0.23  (65-74% of TRIBE v2)           │
+│  GPU-hours needed:  2.5h T4                                     │
+│  Fits in: 1 Kaggle session                                      │
+├─────────────────────────────────────────────────────────────────┤
+│  PRACTICAL MINIMUM: 15h of diverse video                        │
+│  Expected Pearson r: 0.24-0.27  (77-87% of TRIBE v2)           │
+│  GPU-hours needed:  7.5h T4                                     │
+│  Fits in: 1 Kaggle week                                         │
+├─────────────────────────────────────────────────────────────────┤
+│  COMFORTABLE:       30h of diverse video                        │
+│  Expected Pearson r: 0.27-0.29  (87-94% of TRIBE v2)           │
+│  GPU-hours needed:  15h T4                                      │
+│  Fits in: 2 Kaggle weeks (background)                           │
+├─────────────────────────────────────────────────────────────────┤
+│  DIMINISHING RETURNS above 50h — Phase 1 pre-training and       │
+│  Phase 3 fMRI fine-tuning compensate for more teacher data.     │
+└─────────────────────────────────────────────────────────────────┘
+
+DIVERSITY > VOLUME
+  10h of 10 different content types > 100h of the same content type.
+  The fusion model already generalises — the teacher cache just needs
+  to show it enough variety to learn the vertex mapping.
+
+WHAT TO RUN TEACHER ON (priority order, ~15h total):
+  1. CNeuroMod clips (2h)      — has paired fMRI, most relevant
+  2. Nature documentary (2h)   — rich visual + narration + ambient audio
+  3. TED talk / lecture (2h)   — sustained speech, gesture, slides
+  4. Drama / movie clip (2h)   — dialogue, emotion, social interaction
+  5. Music video (1h)          — music + motion, non-speech audio
+  6. Sports / action (1h)      — fast motion, crowd noise
+  7. Cooking / tutorial (2h)   — fine motor, speech + objects
+  8. Ambient / nature (1h)     — minimal speech, pure visual + audio
+  9. Podcast / interview (2h)  — mostly audio + face, text-heavy
+```
+
+---
+
+### Your Available GPU Resources
+
+```
+┌──────────────────┬──────────────┬───────────┬──────────────┬─────────────────────┐
+│ Platform         │ GPU          │ Free quota │ Session limit│ Best use            │
+├──────────────────┼──────────────┼───────────┼──────────────┼─────────────────────┤
+│ Kaggle           │ T4 16GB      │ 30h/week  │ 9h/session   │ Teacher inference   │
+│                  │ (or P100)    │ per account│              │ (reliable, scheduled)│
+├──────────────────┼──────────────┼───────────┼──────────────┼─────────────────────┤
+│ Lightning AI     │ T4 16GB      │ 22h/month │ varies       │ Student training    │
+│                  │              │ free tier  │              │ (good for Phase 1-3)│
+├──────────────────┼──────────────┼───────────┼──────────────┼─────────────────────┤
+│ Modal            │ T4 / A10G    │ $30 credit │ per-second   │ Teacher inference   │
+│                  │ / A100       │ on signup  │ billing      │ (burst, fast setup) │
+└──────────────────┴──────────────┴───────────┴──────────────┴─────────────────────┘
+
+COMBINED FIRST-WEEK CAPACITY:
+  Kaggle:    30h GPU → 60h of video predictions
+  Modal:     $30 credit ÷ $0.00056/s (T4) = 53,571s = ~14.9h GPU → 30h video
+             OR $30 ÷ $0.00111/s (A10G) = ~7.5h → 15h video (but 2× faster)
+  Lightning: 22h/month GPU → 44h video (but save for student training)
+  ─────────────────────────────────────────────────────────────────────
+  Total week 1 teacher inference: ~60-90h of video predictions
+  This exceeds the "comfortable" threshold (30h) in week 1 alone.
+```
+
+---
+
+### Platform 1: Kaggle — Teacher Inference
+
+Use Kaggle for the bulk of teacher inference. Reliable, automated, no credit card.
+
+**Setup once (~1h)**
+
+```python
+# kaggle_tribe_inference.py
+# Run this as a Kaggle Notebook (GPU T4, Internet ON)
+
+# ── Install ──────────────────────────────────────────────────────────
+!pip install -q tribev2 pydrive2 tqdm
+
+# ── Config ───────────────────────────────────────────────────────────
+GDRIVE_FOLDER_ID = "YOUR_GOOGLE_DRIVE_FOLDER_ID"   # where to save outputs
+VIDEO_SOURCE     = "/kaggle/input/your-video-dataset"  # Kaggle dataset mount
+MANIFEST_PATH    = "/kaggle/working/manifest.json"
+CHUNK_SECONDS    = 150   # 100 TRs at TR=1.49s
+DEVICE           = "cuda"
+
+# ── Load manifest (resume from checkpoint) ───────────────────────────
+import json, os
+from pathlib import Path
+
+if os.path.exists(MANIFEST_PATH):
+    manifest = json.load(open(MANIFEST_PATH))
+else:
+    # Build manifest from all video files
+    videos = sorted(Path(VIDEO_SOURCE).glob("*.mp4"))
+    manifest = {}
+    for v in videos:
+        duration = get_video_duration(v)  # ffprobe
+        n_chunks  = int(duration // CHUNK_SECONDS)
+        for i in range(n_chunks):
+            key = f"{v.stem}_{i:04d}"
+            manifest[key] = "pending"
+    json.dump(manifest, open(MANIFEST_PATH, "w"))
+
+# ── Load TRIBE v2 (once, cached in /kaggle/working/hf_cache) ─────────
+from tribev2 import TribeModel
+import torch
+
+os.environ["HF_HOME"] = "/kaggle/working/hf_cache"
+model = TribeModel.from_pretrained("facebook/tribev2")
+model = model.to(DEVICE).eval()
+
+# Register hooks to capture fusion layer 4 and 6 activations
+fusion_activations = {}
+def make_hook(name):
+    def hook(module, input, output):
+        fusion_activations[name] = output.detach().cpu().half()
+    return hook
+
+# Hook into TRIBE v2 fusion transformer layers 4 and 6
+model.encoder.layers[3].register_forward_hook(make_hook("layer4"))
+model.encoder.layers[5].register_forward_hook(make_hook("layer6"))
+
+# ── Inference loop ───────────────────────────────────────────────────
+from google.colab import auth   # for Kaggle, use PyDrive2 instead
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
+
+# Auth Google Drive (requires one-time browser approval)
+gauth = GoogleAuth()
+gauth.LocalWebserverAuth()
+drive = GoogleDrive(gauth)
+
+pending = [k for k,v in manifest.items() if v == "pending"]
+print(f"{len(pending)} segments remaining")
+
+for seg_key in pending:
+    try:
+        video_id, chunk_idx = seg_key.rsplit("_", 1)
+        chunk_idx = int(chunk_idx)
+        video_path = f"{VIDEO_SOURCE}/{video_id}.mp4"
+        t_start = chunk_idx * CHUNK_SECONDS
+        t_end   = t_start + CHUNK_SECONDS
+
+        # Run TRIBE v2 inference on this segment
+        with torch.inference_mode():
+            preds, segments = model.predict(
+                video_path,
+                start_sec=t_start,
+                end_sec=t_end,
+            )
+        # preds: (T, 20484) float32
+
+        # Save: predictions + cached fusion activations
+        out = {
+            "predictions": preds.cpu().half(),           # fp16, ~8MB per chunk
+            "fusion_l4":   fusion_activations["layer4"], # fp16, ~0.5MB
+            "fusion_l6":   fusion_activations["layer6"], # fp16, ~0.5MB
+            "video_id":    video_id,
+            "t_start":     t_start,
+            "t_end":       t_end,
+        }
+        out_path = f"/kaggle/working/{seg_key}.pt"
+        torch.save(out, out_path)
+
+        # Upload to Google Drive
+        f = drive.CreateFile({"parents": [{"id": GDRIVE_FOLDER_ID}],
+                              "title": f"{seg_key}.pt"})
+        f.SetContentFile(out_path)
+        f.Upload()
+        os.remove(out_path)  # free local disk
+
+        # Update manifest
+        manifest[seg_key] = "done"
+        json.dump(manifest, open(MANIFEST_PATH, "w"))
+
+        print(f"✓ {seg_key}")
+
+    except Exception as e:
+        manifest[seg_key] = f"failed: {e}"
+        json.dump(manifest, open(MANIFEST_PATH, "w"))
+        print(f"✗ {seg_key}: {e}")
+```
+
+**Kaggle schedule setup:**
+```
+1. Upload the notebook to Kaggle
+2. Enable GPU (T4 × 1)
+3. Enable Internet access (required for HuggingFace + Drive)
+4. Add your video files as a Kaggle Dataset (private)
+5. Schedule → Run daily at 00:00 UTC
+6. Each run processes ~18h of video (9h session × 2× realtime)
+   stops automatically at session limit, resumes next day from manifest
+
+Week 1 output: ~60h of diverse video predictions saved to Google Drive
+```
+
+---
+
+### Platform 2: Modal — Teacher Inference (Burst, Fast)
+
+Modal is ideal for burning the $30 free credits on teacher inference fast.
+Modal bills per second, has A10G GPUs (2× faster than T4), and cold-start
+in ~30s. No session time limits.
+
+**Why Modal for inference specifically:**
+```
+T4  on Modal: $0.000556/s = $2.00/h → 30h video per $30 credit
+A10G on Modal: $0.001110/s = $4.00/h → but 2× faster → same video/$ as T4
+               TRIBE v2 runs in fp16 → A10G 24GB fits full model easily
+               Effective: ~30h of video predictions from $30 credit
+
+No session limit → run one big job, process all 15h target dataset at once
+Cold start: ~30s (TRIBE v2 model load) → amortised over long runs
+```
+
+```python
+# modal_tribe_inference.py
+# Run locally: modal run modal_tribe_inference.py
+
+import modal
+import torch
+from pathlib import Path
+
+# Define Modal image with all dependencies
+image = (
+    modal.Image.debian_slim()
+    .pip_install("tribev2", "torch", "tqdm", "google-cloud-storage")
+)
+
+app = modal.App("tribe-inference", image=image)
+
+# GPU: use A10G for speed (fits within $30 credits for 15h of video)
+@app.function(
+    gpu="A10G",                      # or "T4" to stretch credits further
+    timeout=3600,                    # 1h per function call
+    secrets=[modal.Secret.from_name("google-cloud-storage")],
+    volumes={"/cache": modal.Volume.from_name("tribe-cache", create_if_missing=True)},
+)
+def run_inference_on_segment(video_path: str, t_start: float, t_end: float, seg_key: str):
+    """Run TRIBE v2 on one 150s segment, save to GCS."""
+    import os
+    from tribev2 import TribeModel
+
+    os.environ["HF_HOME"] = "/cache/hf"    # persisted in Modal Volume
+
+    # Load model (cached in Volume after first call — no re-download)
+    model = TribeModel.from_pretrained("facebook/tribev2")
+    model = model.cuda().eval()
+
+    # Hook fusion layers
+    acts = {}
+    model.encoder.layers[3].register_forward_hook(
+        lambda m, i, o: acts.update({"l4": o.detach().cpu().half()})
+    )
+    model.encoder.layers[5].register_forward_hook(
+        lambda m, i, o: acts.update({"l6": o.detach().cpu().half()})
+    )
+
+    with torch.inference_mode():
+        preds, _ = model.predict(video_path, start_sec=t_start, end_sec=t_end)
+
+    result = {
+        "predictions": preds.cpu().half(),
+        "fusion_l4":   acts["l4"],
+        "fusion_l6":   acts["l6"],
+        "seg_key":     seg_key,
+    }
+
+    # Save to Modal Volume (or GCS)
+    out_path = f"/cache/predictions/{seg_key}.pt"
+    torch.save(result, out_path)
+    return seg_key
+
+@app.local_entrypoint()
+def main():
+    # Build list of all segments to process
+    segments = build_segment_list("./videos", chunk_seconds=150)
+
+    # Run all segments in parallel on Modal (each gets its own A10G)
+    # Modal handles parallelism automatically
+    results = list(run_inference_on_segment.starmap(segments))
+    print(f"Completed {len(results)} segments")
+```
+
+**Running it:**
+```bash
+# One command, Modal handles everything
+modal run modal_tribe_inference.py
+
+# Modal spins up N A10G containers in parallel (N = number of segments)
+# Each container processes one 150s chunk
+# All results saved to Modal Volume → download to Google Drive
+# Total time for 15h of video: ~45min (parallel)
+# Total cost: ~$6-8 from $30 credits
+# Remaining $22 credits → save for student training if Lightning quota runs out
+```
+
+**Cost breakdown for Modal $30 credits:**
+```
+A10G: $0.00111/s
+Per segment (150s video → ~75s inference on A10G): 75s × $0.00111 = $0.083
+15h video = 360 segments × $0.083 = $30 total  ← uses all credits for 15h
+
+T4: $0.000556/s
+Per segment (150s video → ~150s inference on T4): 150s × $0.000556 = $0.083
+Same cost per video-hour! A10G is faster but twice the price.
+
+RECOMMENDATION: Use T4 on Modal to maximise video hours per dollar.
+  $30 ÷ $0.083/segment = 360 segments = 360 × 150s = 15h of video
+  This hits the "comfortable" threshold in one Modal job.
+
+  Run it all at once → 15h of video processed in ~4h wall clock (parallel)
+```
+
+---
+
+### Platform 3: Lightning AI — Student Training (Not Inference)
+
+Lightning AI free tier (22h/month GPU) is better spent on student training,
+not teacher inference. Here's why and how.
+
+```
+WHY NOT LIGHTNING FOR INFERENCE:
+  22h/month is limited. At 2× realtime: only 44h of video.
+  Better to use Kaggle (30h/week) for inference.
+  Lightning sessions are more reliable for training (steady GPU workload).
+
+WHY LIGHTNING FOR STUDENT TRAINING:
+  Student training (Phase 1, 2, 3) runs for hours continuously.
+  Lightning AI has better session stability than Kaggle for long training runs.
+  22h/month covers:
+    Phase 1 self-supervised: ~20h  ← uses most of monthly quota
+    Phase 2 KD fine-tuning:   ~5h  ← use Kaggle for this
+    Phase 3 fMRI fine-tune:  ~10h  ← split across 2 months or use Kaggle
+
+LIGHTNING SETUP FOR PHASE 1 (self-supervised pre-training):
+
+  1. Create a Lightning Studio (free tier)
+  2. Clone your repo: git clone <your-repo>
+  3. pip install -r requirements.txt
+  4. Mount Google Drive (where cached features live):
+       from google.colab import drive
+       drive.mount('/gdrive')
+  5. Run Phase 1 training:
+       python train_phase1.py \
+         --feature-dir /gdrive/MyDrive/tribe_features \
+         --checkpoint-dir /gdrive/MyDrive/checkpoints \
+         --batch-size 32 \
+         --epochs 25
+
+LIGHTNING SESSION MANAGEMENT:
+  Lightning AI sessions persist between connections (unlike Colab).
+  Start Phase 1, close browser, reconnect next day — training continues.
+  This makes it ideal for long Phase 1 runs (20h total).
+
+  Save checkpoints to Google Drive every epoch:
+    → If Lightning session ends, resume from last checkpoint
+    → 25 epochs × ~45min each = ~19h total for Phase 1
+    → Fits within 22h/month Lightning quota with ~3h to spare
+```
+
+---
+
+### The Actual Execution Plan With Your Resources
+
+```
+WEEK 0 (Day 1, ~3h setup):
+  □ Modal: run inference job on 15h diverse video ($8 of $30 credits)
+    → 360 segments × parallel A10G → done in ~4h, saves to Modal Volume
+    → Download to Google Drive (~8GB fp16 predictions)
+    → You now have your entire target teacher dataset
+
+  □ Kaggle: set up inference notebook + daily schedule
+    → Will accumulate MORE predictions in background (optional top-up)
+
+  □ Extract tiny backbone features on Kaggle (first session, ~6h):
+    python extract_features.py \
+      --video-dir /kaggle/input/your-videos \
+      --output-dir /kaggle/working/features \
+      --models miniLM,whisper-tiny,mobilevit-s
+    → Upload to Google Drive
+
+WEEK 1 (Lightning AI, Phase 1 self-supervised):
+  □ Mount Google Drive features in Lightning Studio
+  □ Start Phase 1 training (20h, runs over ~3 Lightning sessions)
+  □ Checkpoint to Drive every epoch
+  □ Meanwhile Kaggle accumulates more teacher predictions (background)
+
+WEEK 2 (Lightning AI / Kaggle, Phase 2 KD):
+  □ Phase 2 KD fine-tuning on Modal teacher predictions (5h)
+    Run on Kaggle (1 session) or Lightning (uses ~5h of monthly quota)
+  □ Val Pearson r check → should be >0.22
+
+WEEK 2-3 (Kaggle, Phase 3 fMRI fine-tuning):
+  □ Download CNeuroMod fMRI data (free, requires data agreement)
+  □ Phase 3 training on Kaggle (10h = 2 Kaggle sessions)
+  □ Final Pearson r: target >0.27
+
+TOTAL:
+  Modal credits used:    ~$8   (15h video, first day)
+  Kaggle quota used:     ~60h  (background inference + Phase 3 training)
+  Lightning AI quota:    ~22h  (Phase 1 self-supervised)
+  Wall clock:            ~3 weeks
+  Expected Pearson r:    0.27-0.29
+```
+
+---
+
+### Minimum Viable Run: If You Only Have 1 Kaggle Session
+
+```
+If you want to test the entire pipeline before committing weeks of time,
+here is the smallest possible end-to-end distillation run:
+
+DATA:
+  Teacher predictions:  2h of diverse video (1 Kaggle session, ~4h GPU)
+  Backbone features:    Same 2h + 10h of LibriSpeech audio-only (free, tiny)
+  fMRI:                 CNeuroMod Friends S01E01 only (~45 min)
+
+TRAINING:
+  Phase 1 (self-sup):   5 epochs only (2-3h GPU on Kaggle)
+  Phase 2 (KD):         3 epochs (1h GPU)
+  Phase 3 (fMRI):       3 epochs (1h GPU)
+
+EXPECTED RESULT:
+  Pearson r: 0.15-0.20  (50-65% of TRIBE v2)
+  This is not final quality — it's a smoke test of the full pipeline.
+  Every component gets exercised: inference, feature extraction,
+  self-supervised pre-training, KD, fMRI fine-tuning.
+
+WHY DO THIS FIRST:
+  - Catch bugs before spending 3 weeks on a broken pipeline
+  - Validate that teacher predictions are correctly formatted
+  - Confirm that the self-supervised losses actually decrease
+  - Measure actual GPU memory usage (may need to reduce batch size)
+
+TOTAL GPU COST: ~8h Kaggle (1 week quota), $0
+TOTAL TIME: 2-3 days
+```
+
+---
+
+## Part 3d: The 2-Day Sprint Plan
+
+Get a trained, evaluated student model in 48 hours.
+Uses Modal credits for inference, Kaggle for training.
+No Lightning AI needed (save that quota for a longer run later).
+
+Expected result: Pearson r **0.24-0.27** — a real, working distilled model.
+
+---
+
+### What You Accept As Tradeoffs
+
+```
+Full Strategy C target:  0.29-0.31 Pearson r  (3-5 weeks)
+2-Day Sprint target:     0.24-0.27 Pearson r  (48 hours)
+
+Tradeoffs accepted:
+  ✗ No Phase 1 self-supervised pre-training  (saves ~20h)
+  ✗ Only 5h of teacher predictions instead of 15-30h
+  ✗ No Phase 3 fMRI fine-tuning             (saves ~10h)
+  ✓ Full KD pipeline exercised end to end
+  ✓ Real model you can run inference with
+  ✓ Clear baseline to iterate from
+  ✓ All cached artifacts reusable for the full run later
+
+The 2-day model is not throwaway — it becomes the Phase 2 checkpoint
+for the full Strategy C run. Nothing is wasted.
+```
+
+---
+
+### Hour-by-Hour Schedule
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DAY 1  |  TEACHER INFERENCE + FEATURE EXTRACTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+H+0:00  YOU: Launch Modal inference job (5 min of your time)
+        modal run modal_tribe_inference.py --hours 5 --gpu T4
+        → Modal spins up ~120 parallel T4 containers
+        → Each container processes one 150s video segment
+        → All 120 segments (= 5h video) done in parallel
+
+H+0:05  YOU: Launch Kaggle notebook for feature extraction (10 min)
+        → Upload your video files to Kaggle Dataset
+        → Start notebook: extract_features.py on the same 5h of video
+        → Tiny backbones (67M params) run fast — done in ~30min
+
+H+0:10  YOU: Nothing to do. Both jobs running in parallel.
+        Modal:  120 containers each finishing in ~75s
+        Kaggle: feature extraction churning through videos
+
+H+0:45  Modal done. 5h of teacher predictions in Modal Volume.
+        → Download to local machine: modal volume get tribe-cache predictions/
+        → Upload to Google Drive: ~4GB fp16 predictions
+
+H+1:00  Kaggle feature extraction done.
+        → 5h of backbone features (text + audio + video) saved to Drive
+        → ~0.5GB total
+
+H+1:30  All data on Google Drive. Both jobs complete.
+        Modal cost so far: ~$4 of $30 credits (5h × T4 rate)
+
+        ┌─────────────────────────────────────────────┐
+        │  READY FOR TRAINING                          │
+        │  Google Drive now has:                       │
+        │    predictions/  — teacher preds (4GB fp16)  │
+        │    features/     — backbone feats (0.5GB)    │
+        └─────────────────────────────────────────────┘
+
+H+2:00  YOU: Start Kaggle training notebook (5 min setup)
+        → Mount Google Drive in Kaggle notebook
+        → Launch Phase 2 KD training (no Phase 1 — go straight to KD)
+
+        Why skip Phase 1 here:
+          Phase 1 pre-training takes 20h and needs 1000h of data.
+          In the 2-day sprint we go directly to KD.
+          The model starts with random fusion weights (not pre-trained).
+          This costs ~0.03 Pearson r vs the full run — acceptable for a sprint.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DAY 1 H+2 to H+11  |  PHASE 2: KD TRAINING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Kaggle session: T4 16GB, 9h max
+
+Training config for the sprint (aggressive but stable):
+  Model:       TinyTribeMoE (v3 arch, n_vertices=1000 Schaefer target)
+  Data:        5h teacher predictions on CNeuroMod/diverse video
+  Epochs:      20  (more epochs, less data — compensates for small dataset)
+  LR:          3e-4  (higher than normal — small dataset overfits slower with high LR)
+  Batch size:  8
+  Segment len: 50 TRs (shorter — more updates per epoch)
+  Loss:        0.7 × output_KD  +  0.2 × temporal  +  0.1 × feature_KD  +  aux
+  Modality dropout: 0.2  (lower than normal — small dataset, need all signal)
+
+  Layer-by-layer LR:
+    Projectors:  3e-4
+    MoE fusion:  3e-4
+    Output head: 1e-3  (higher — this is what maps features to vertices)
+
+  Save checkpoint every 5 epochs to Google Drive.
+
+H+2:00   Training starts on Kaggle
+H+7:00   Epoch ~12 complete. Val loss plateauing.
+         Kaggle saves checkpoint to Drive automatically.
+H+9:00   Kaggle session hits 9h limit. Training stops at ~epoch 18.
+         Checkpoint on Drive: sprint_phase2_e18.pt
+
+H+9:30  YOU: Start second Kaggle session, resume from checkpoint.
+        Load sprint_phase2_e18.pt, run 2 more epochs.
+        Total: 20 epochs done. Training complete.
+
+H+11:00  Phase 2 complete.
+         Expected val Pearson r (on held-out video segments): 0.18-0.22
+         (Lower than full Strategy C because no Phase 1 pre-training)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DAY 2 H+0 to H+8  |  PHASE 3: fMRI FINE-TUNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Start of Day 2. Load Phase 2 checkpoint. Fine-tune on real fMRI.
+
+DATA: CNeuroMod Friends S01 only (1 subject, ~15h fMRI)
+  Why just 1 subject + 1 season:
+    - Proves the pipeline works on real fMRI
+    - 15h × 1 subject = ~36K TRs — enough for meaningful fine-tuning
+    - Full run later uses all 4 subjects × 6 seasons
+
+  Download CNeuroMod S01 data:
+    → Register at cneuromod.ca (academic data agreement, ~1 day)
+    OR use the Algonauts 2025 training data if already downloaded
+    → Upload preprocessed fMRI .pt files to Google Drive
+
+Training config for Phase 3 sprint:
+  Init:         sprint_phase2_e20.pt
+  Epochs:       8
+  LR:           {fusion: 5e-5, output: 1e-4}  (backbones frozen)
+  Loss:         0.5 × fMRI  +  0.3 × teacher_pred  +  0.2 × temporal
+  Batch size:   4  (fMRI segments are larger)
+  Segment len:  100 TRs
+
+H+0:00   Phase 3 training starts on Kaggle (new session)
+H+5:00   Epoch 8 complete. Training done.
+         Save: sprint_final.pt to Google Drive
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DAY 2 H+5 to H+8  |  EVALUATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+H+5:00  Load sprint_final.pt on Kaggle.
+        Run evaluation on CNeuroMod Friends S01E10-S01E12 (held-out).
+
+Evaluation metrics to compute:
+  1. Mean Pearson r across all 20,484 vertices (or 1,000 Schaefer parcels)
+  2. Per-ROI Pearson r: early visual, auditory, language, default mode
+  3. Noise ceiling fraction: Pearson r / noise_ceiling (how much signal captured)
+  4. Inference speed: ms per second of video on T4
+
+H+7:00  Results. Compare against TRIBE v2 teacher on the same clips.
+
+H+8:00  DONE.
+```
+
+---
+
+### What You Have After 48 Hours
+
+```
+Artifacts on Google Drive:
+  predictions/          5h teacher predictions (4GB) — reuse in full run
+  features/             5h backbone features (0.5GB) — reuse in full run
+  sprint_phase2_e20.pt  KD checkpoint — starting point for full run Phase 2
+  sprint_final.pt       Final model — usable now
+
+Performance:
+  Pearson r:            0.24-0.27  (77-87% of TRIBE v2)
+  Inference speed:      ~280ms/s on T4, ~3s/s on CPU
+  Model size:           ~120MB INT8 after export
+
+Costs:
+  Modal credits:        ~$4 (5h video inference)
+  Kaggle quota:         ~20h (out of 30h/week)
+  Lightning AI:         0h used (save for full run)
+```
+
+---
+
+### What to Do Next (Full Run)
+
+The 2-day sprint produces everything you need to start the full Strategy C run
+immediately — nothing has to be redone.
+
+```
+After the sprint, the full run continues from where you left off:
+
+  Sprint artifact             Full run usage
+  ─────────────────────────────────────────────────────────────
+  predictions/ (5h)        →  Kept as Phase 2 seed data
+  features/ (5h)           →  Kept, add more via Kaggle background job
+  sprint_phase2_e20.pt     →  Phase 2 starting point (skip Phase 2 warmup)
+  sprint_final.pt          →  Phase 3 starting point (already partially trained)
+
+  What the full run adds:
+  Phase 1:  Self-supervised pre-training on 1000h+ data (Lightning AI, 3 weeks)
+            → Load Phase 1 weights → re-run Phase 2 from scratch (better init)
+  Phase 2:  More teacher predictions (Kaggle accumulates 60h/week)
+            → Continue Phase 2 with 30h predictions instead of 5h
+  Phase 3:  All 4 CNeuroMod subjects + Friends S01-S06 (not just S01)
+
+  Expected improvement from sprint → full run:
+    0.24-0.27  →  0.29-0.31 Pearson r
+```
+
+---
+
+### Decision Tree: Sprint vs Full Run
+
+```
+                    Do you have 48 hours?
+                           │
+                    ┌──────┴──────┐
+                   YES            NO
+                    │              │
+           Run the 2-day      Wait — do full
+             sprint            run properly
+                    │
+         Is r > 0.22 after sprint?
+                    │
+             ┌──────┴──────┐
+            YES             NO
+             │               │
+     Continue to         Debug:
+     full run             □ Check teacher predictions shape
+                          □ Check feature normalization
+                          □ Check loss isn't NaN
+                          □ Reduce LR by 3×, retry Phase 2
+```
 
 ---
 

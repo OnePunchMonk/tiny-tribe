@@ -1,0 +1,16 @@
+{
+  "Caro Pasta TF!.mp4": {
+    "video": "Caro Pasta TF!.mp4",
+    "n_timesteps": 49,
+    "n_vertices": 20484,
+    "duration_seconds": 49,
+    "overall_mean_activation": 0.1023450642824173,
+    "overall_std_activation": 0.19614069163799286,
+    "overall_max_activation": 1.22390878200531,
+    "left_hemisphere_mean": 0.10437127947807312,
+    "right_hemisphere_mean": 0.10031887143850327,
+    "left_hemisphere_max": 1.1357437372207642,
+    "right_hemisphere_max": 1.22390878200531,
+    "peak_timestep": 16
+  }
+}
