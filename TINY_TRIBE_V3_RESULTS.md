@@ -197,37 +197,90 @@ This measures how well the student replicates the **pattern** of teacher predict
 
 ## Training Results (POC — 200 clips, 400 parcels)
 
-| Epoch | Val Pearson r | Best? |
+Each epoch here = 10 actual training steps (validation runs every 10 epochs).
+
+| Val Check | Val Pearson r | Best? |
 |---|---|---|
-| 0 | 0.033 | ✓ |
-| 1 | 0.066 | ✓ |
-| 2 | 0.122 | ✓ |
-| 3 | 0.174 | ✓ |
-| 4 | 0.214 | ✓ |
-| 5 | 0.265 | ✓ |
-| 6 | 0.324 | ✓ |
-| 7 | 0.386 | ✓ |
-| 8 | 0.447 | ✓ |
-| 9 | 0.469 | ✓ |
-| 10 | 0.481 | ✓ |
-| 11 | 0.482 | ✓ |
-| 12 | 0.483 | ✓ |
-| 13 | 0.485 | ✓ |
-| 14 | 0.484 | |
-| 15 | 0.489 | ✓ |
-| 16 | 0.487 | |
-| 17 | 0.496 | ✓ |
-| 18 | 0.500 | ✓ |
-| 19 | 0.503 | ✓ |
-| 20 | 0.504 | ✓ |
-| 21 | 0.517 | ✓ |
-| ... | *training continues* | |
+| 0 | 0.0328 | ✓ |
+| 1 | 0.0662 | ✓ |
+| 2 | 0.1223 | ✓ |
+| 3 | 0.1737 | ✓ |
+| 4 | 0.2140 | ✓ |
+| 5 | 0.2650 | ✓ |
+| 6 | 0.3235 | ✓ |
+| 7 | 0.3861 | ✓ |
+| 8 | 0.4474 | ✓ |
+| 9 | 0.4686 | ✓ |
+| 10 | 0.4806 | ✓ |
+| 11 | 0.4816 | ✓ |
+| 12 | 0.4834 | ✓ |
+| 13 | 0.4851 | ✓ |
+| 14 | 0.4839 | |
+| 15 | 0.4894 | ✓ |
+| 16 | 0.4865 | |
+| 17 | 0.4963 | ✓ |
+| 18 | 0.4998 | ✓ |
+| 19 | 0.5034 | ✓ |
+| 20 | 0.5037 | ✓ |
+| 21 | 0.5169 | ✓ |
+| 22 | 0.5363 | ✓ |
+| 23 | 0.5567 | ✓ |
+| 24 | 0.5922 | ✓ |
+| 25 | 0.6158 | ✓ |
+| 26 | 0.6176 | ✓ |
+| 27 | 0.6111 | |
+| 28 | 0.6038 | |
+| 29 | 0.6375 | ✓ |
+| 30 | 0.6125 | |
+| 31 | 0.6026 | |
+| 32 | 0.6154 | |
+| 33 | 0.6167 | |
+| 34 | 0.6489 | ✓ |
+| 35 | 0.6668 | ✓ |
+| 36 | 0.6743 | ✓ |
+| 37 | 0.6783 | ✓ |
+| 38 | 0.6675 | |
+| 39 | 0.6672 | |
+| 40 | 0.6603 | |
+| 41 | 0.6619 | |
+| 42 | 0.6911 | ✓ |
+| 43 | 0.7008 | ✓ |
+| 44 | 0.6813 | |
+| 45 | 0.7057 | ✓ |
+| 46 | 0.7165 | ✓ |
+| 47 | 0.7034 | |
+| 48 | 0.7034 | |
+| 49 | 0.6932 | |
+| 50 | 0.6984 | |
+| 51 | 0.7031 | |
+| **52** | **0.7278** | **✓ BEST** |
+| 53 | 0.7193 | |
+| 54 | 0.7226 | |
+| 55 | 0.7041 | |
+| 56 | 0.7085 | |
+| 57 | 0.7071 | |
+| 58 | 0.7130 | |
+| 59 | 0.7090 | |
+| 60 | 0.7083 | |
+| 61 | 0.7151 | |
+| 62 | 0.7096 | |
+| 63 | 0.6956 | |
+| 64 | 0.7031 | |
+| 65 | 0.7085 | |
+| 66 | 0.7043 | |
+| 67 | 0.7091 | |
+| 68 | 0.7044 | |
+| 69 | 0.7048 | |
+| 70 | 0.7120 | |
+| 71 | 0.7167 | |
+| 72 | 0.7063 | |
 
 **Key observations:**
-- Fast initial convergence: 0.03 → 0.45 in 8 epochs
-- No sign of overfitting at epoch 21 (val r still improving)
-- Heavy regularisation (`modality_dropout=0.5`) is effectively preventing collapse
-- Expected plateau: ~epoch 40–60 at r ≈ 0.60–0.70
+- Fast initial convergence: 0.03 → 0.45 in 8 val checks (80 epochs)
+- Broke 0.60 at check 25, 0.70 at check 43
+- **Best: val check 52 → Pearson r = 0.7278** (epoch 520)
+- Plateau visible after check 52 — model has converged
+- No catastrophic overfitting despite heavy regularisation (`modality_dropout=0.5`)
 
 ---
 
@@ -254,10 +307,12 @@ Final plots generated on training completion:
 
 ```
 checkpoints/
-  best-epoch=019-val/pearson_r=0.5034.ckpt   ← best so far
+  best-epoch=052-val/pearson_r=0.7278.ckpt   ← best (hosted on HF Hub)
   last.ckpt
   tb_logs/    ← TensorBoard logs
 ```
+
+Best checkpoint on Hugging Face: [OnePunchMonk101010/tribev2-distilled](https://huggingface.co/OnePunchMonk101010/tribev2-distilled)
 
 To load:
 ```python

@@ -104,33 +104,39 @@ def load_teacher_full_res(distillation_dir, stems):
 
 # ── Plotting using tribev2 PlotBrain (PyVista) ────────────────────────────────
 
-def plot_4view_comparison(plotter, teacher_avg, student_avg, stem, save_dir, cmap="fire"):
+def plot_4view_comparison(plotter, teacher_avg, student_avg, stem, save_dir):
     """4-view (left/right/medial_left/medial_right) side-by-side: teacher vs student.
 
-    Mirrors generate_paper_brain.py Plot 1 style.
+    Mirrors generate_paper_brain.py Plot 4 — fire cmap with alpha transparency
+    so low-activation areas show white sulcal background.
     """
     from tribev2.plotting.utils import plot_colorbar
-
-    vmax = float(np.percentile(np.abs(teacher_avg), 99))
 
     fig, axes = plt.subplots(2, 4, figsize=(20, 10))
     views = ["left", "right", "medial_left", "medial_right"]
 
     sm = None
     for col, view in enumerate(views):
+        # Exactly as generate_paper_brain.py Plot 4:
+        # norm_percentile=99, vmin=0.5, alpha_cmap=(0, 0.2)
+        # → low activations are transparent (white brain shows through)
         sm = plotter.plot_surf(
             teacher_avg,
             axes=axes[0, col],
             views=view,
-            cmap=cmap,
+            cmap="fire",
             norm_percentile=99,
+            vmin=0.5,
+            alpha_cmap=(0, 0.2),
         )
         plotter.plot_surf(
             student_avg,
             axes=axes[1, col],
             views=view,
-            cmap=cmap,
+            cmap="fire",
             norm_percentile=99,
+            vmin=0.5,
+            alpha_cmap=(0, 0.2),
         )
         axes[0, col].set_title(view, fontsize=9)
         axes[1, col].set_title(view, fontsize=9)
@@ -139,7 +145,7 @@ def plot_4view_comparison(plotter, teacher_avg, student_avg, stem, save_dir, cma
     axes[1, 0].set_ylabel("Tiny TRIBE v3\n(student)", fontsize=10, labelpad=8)
 
     cbar_ax = fig.add_axes([0.92, 0.15, 0.015, 0.7])
-    plot_colorbar(cbar_ax, sm=sm, label="Activation (norm.)")
+    plot_colorbar(cbar_ax, sm=sm, label="Activation")
 
     fig.suptitle(f"Average Activation — clip {stem}", fontsize=13, fontweight="bold")
     fig.subplots_adjust(right=0.90, wspace=0.02, hspace=0.05)
@@ -150,11 +156,11 @@ def plot_4view_comparison(plotter, teacher_avg, student_avg, stem, save_dir, cma
     print(f"  [brain] Saved {out}")
 
 
-def plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir,
-                        cmap="fire", norm_percentile=99):
+def plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir):
     """Temporal sequence (all TRs) for teacher and student separately.
 
-    Uses tribev2's plot_timesteps — identical to generate_paper_brain.py Plot 3.
+    Uses tribev2's plot_timesteps — identical to generate_paper_brain.py Plot 3,
+    with alpha_cmap=(0, 0.2) so low-activation areas stay white.
     """
     T = teacher_full.shape[0]
 
@@ -162,8 +168,10 @@ def plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir,
     fig_t = plotter.plot_timesteps(
         teacher_full,
         views="left",
-        norm_percentile=norm_percentile,
-        cmap=cmap,
+        norm_percentile=99,
+        cmap="fire",
+        alpha_cmap=(0, 0.2),
+        vmin=0.5,
     )
     fig_t.suptitle(f"TRIBE v2 — clip {stem} — all {T} TRs", fontsize=12, fontweight="bold")
     out_t = save_dir / f"brain_viz_{stem}_timesteps_teacher.png"
@@ -175,8 +183,10 @@ def plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir,
     fig_s = plotter.plot_timesteps(
         student_full,
         views="left",
-        norm_percentile=norm_percentile,
-        cmap=cmap,
+        norm_percentile=99,
+        cmap="fire",
+        alpha_cmap=(0, 0.2),
+        vmin=0.5,
     )
     fig_s.suptitle(f"Tiny TRIBE v3 — clip {stem} — all {T} TRs", fontsize=12, fontweight="bold")
     out_s = save_dir / f"brain_viz_{stem}_timesteps_student.png"
@@ -186,7 +196,11 @@ def plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir,
 
 
 def plot_signed_comparison(plotter, teacher_avg, student_avg, stem, save_dir):
-    """Seismic (diverging) side-by-side — mirrors generate_paper_brain.py Plot 5."""
+    """Seismic (diverging) side-by-side — mirrors generate_paper_brain.py Plot 5.
+
+    alpha_cmap=(0, 0.2) with symmetric=True (auto-applied for seismic by get_cmap)
+    makes near-zero vertices transparent so white brain shows through.
+    """
     from tribev2.plotting.utils import plot_colorbar
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
@@ -201,6 +215,7 @@ def plot_signed_comparison(plotter, teacher_avg, student_avg, stem, save_dir):
             cmap="seismic",
             norm_percentile=99,
             symmetric_cbar=True,
+            alpha_cmap=(0, 0.2),
         )
         plotter.plot_surf(
             student_avg,
@@ -209,6 +224,7 @@ def plot_signed_comparison(plotter, teacher_avg, student_avg, stem, save_dir):
             cmap="seismic",
             norm_percentile=99,
             symmetric_cbar=True,
+            alpha_cmap=(0, 0.2),
         )
         axes[0, col].set_title(view, fontsize=9)
         axes[1, col].set_title(view, fontsize=9)
@@ -270,11 +286,10 @@ def main():
         student_avg = student_full.mean(axis=0)
 
         # Plot 1: 4-view average activation (fire cmap) — teacher row vs student row
-        plot_4view_comparison(plotter, teacher_avg, student_avg, stem, save_dir, cmap="fire")
+        plot_4view_comparison(plotter, teacher_avg, student_avg, stem, save_dir)
 
         # Plot 2: Temporal sequence left-hemisphere (fire cmap)
-        plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir,
-                            cmap="fire", norm_percentile=99)
+        plot_timesteps_both(plotter, teacher_full, student_full, stem, save_dir)
 
         # Plot 3: Signed seismic comparison
         plot_signed_comparison(plotter, teacher_avg, student_avg, stem, save_dir)
