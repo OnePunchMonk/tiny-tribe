@@ -11,6 +11,22 @@ Tiny-TRIBE v3 uses three frozen backbone encoders:
 
 These feed into a lightweight fusion Transformer that maps multimodal representations to cortical surface predictions (~20k vertices, fsaverage5).
 
+## Checkpoints
+
+The best checkpoint (epoch 52, Pearson r = 0.7278) is hosted on Hugging Face:
+
+> **[`OnePunchMonk101010/tribev2-distilled`](https://huggingface.co/OnePunchMonk101010/tribev2-distilled)**
+> `checkpoints/best-epoch=052-val/pearson_r=0.7278.ckpt`
+
+Checkpoints are not tracked in git. Download via:
+```python
+from huggingface_hub import hf_hub_download
+path = hf_hub_download(
+    repo_id="OnePunchMonk101010/tribev2-distilled",
+    filename="checkpoints/best-epoch=052-val/pearson_r=0.7278.ckpt"
+)
+```
+
 ## Dataset
 
 The distillation dataset (video clips + TRIBE v2 predictions) is too large for GitHub.
