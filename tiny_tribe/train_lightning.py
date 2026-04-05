@@ -46,30 +46,53 @@ from tiny_tribe.v3_model import TinyTribeV3
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 
+def parcellate(teacher: torch.Tensor, n_parcels: int) -> torch.Tensor:
+    """Map (T, 20484) fsaverage5 → (T, n_parcels) by uniform chunk averaging.
+
+    Replace with a real atlas lookup (e.g. Schaefer-400 annot file) for
+    production. This is a valid placeholder: each parcel = mean of
+    20484/n_parcels consecutive vertices.
+    """
+    T, V = teacher.shape
+    if V == n_parcels:
+        return teacher
+    chunk = V // n_parcels
+    return torch.stack([
+        teacher[:, i * chunk:(i + 1) * chunk].mean(dim=1)
+        for i in range(n_parcels)
+    ], dim=1)  # (T, n_parcels)
+
+
 class ClipDataset(Dataset):
     """Loads pre-extracted .pt feature files from extract_features_v3.py.
 
     Each file contains:
-        text:       (T, 384)  float16
-        audio:      (T, 384)  float16
-        video:      (T, 640)  float16
+        text:       (T, 384)   float16
+        audio:      (T, 384)   float16
+        video:      (T, 640)   float16
         teacher:    (T, 20484) float16 — TRIBE v2 predictions
         subject_id: int
+
+    If n_parcels < 20484, teacher is parcellated on load (no re-extraction needed).
     """
 
-    def __init__(self, pt_files: List[Path]):
+    def __init__(self, pt_files: List[Path], n_parcels: int = 400):
         self.files = pt_files
+        self.n_parcels = n_parcels
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
         data = torch.load(self.files[idx], map_location="cpu", weights_only=True)
+        teacher = data["teacher"].float()  # (T, 20484)
+        if self.n_parcels != teacher.shape[1]:
+            teacher = parcellate(teacher, self.n_parcels)
         return {
-            "text":       data["text"].float(),       # (T, 384)
-            "audio":      data["audio"].float(),      # (T, 384)
-            "video":      data["video"].float(),      # (T, 640)
-            "teacher":    data["teacher"].float(),    # (T, 20484)
+            "text":       data["text"].float(),
+            "audio":      data["audio"].float(),
+            "video":      data["video"].float(),
+            "teacher":    teacher,
             "subject_id": torch.tensor(
                 int(data.get("subject_id", 0)), dtype=torch.long
             ),
@@ -84,6 +107,7 @@ class ClipDataModule(L.LightningDataModule):
         val_fraction: float = 0.20,
         num_workers: int = 2,
         seed: int = 42,
+        n_parcels: int = 400,
     ):
         super().__init__()
         self.features_dir = Path(features_dir)
@@ -91,6 +115,7 @@ class ClipDataModule(L.LightningDataModule):
         self.val_fraction = val_fraction
         self.num_workers = num_workers
         self.seed = seed
+        self.n_parcels = n_parcels
 
     def setup(self, stage=None):
         all_files = sorted(self.features_dir.glob("*.pt"))
@@ -103,9 +128,9 @@ class ClipDataModule(L.LightningDataModule):
         gen = torch.Generator().manual_seed(self.seed)
         train_files, val_files = random_split(all_files, [n_train, n_val],
                                               generator=gen)
-        self.train_ds = ClipDataset(list(train_files))
-        self.val_ds   = ClipDataset(list(val_files))
-        print(f"Dataset: {n_train} train / {n_val} val clips")
+        self.train_ds = ClipDataset(list(train_files), n_parcels=self.n_parcels)
+        self.val_ds   = ClipDataset(list(val_files),   n_parcels=self.n_parcels)
+        print(f"Dataset: {n_train} train / {n_val} val | n_parcels={self.n_parcels}")
 
     def train_dataloader(self):
         return DataLoader(self.train_ds, batch_size=self.batch_size,
@@ -226,18 +251,18 @@ class PearsonRMetric:
 class TinyTribeKD(L.LightningModule):
     def __init__(
         self,
-        n_vertices:  int   = 20484,
+        n_vertices:  int   = 400,    # POC: Schaefer-400 parcels
         n_subjects:  int   = 1,
-        hidden_dim:  int   = 512,
-        num_layers:  int   = 4,
-        num_heads:   int   = 8,
-        num_experts: int   = 8,
+        hidden_dim:  int   = 256,    # POC: smaller model
+        num_layers:  int   = 2,      # POC: 2 transformer layers
+        num_heads:   int   = 4,
+        num_experts: int   = 4,      # POC: 4 experts
         top_k:       int   = 2,
         ff_mult:     int   = 2,
-        dropout:     float = 0.1,
-        modality_dropout: float = 0.3,
-        lr:          float = 3e-4,
-        wd:          float = 1e-2,
+        dropout:     float = 0.3,    # POC: heavier dropout
+        modality_dropout: float = 0.5,  # POC: aggressive modality dropout
+        lr:          float = 1e-3,
+        wd:          float = 0.1,    # POC: heavy weight decay
         warmup_epochs: int = 3,
         max_epochs:  int   = 100,
     ):
@@ -542,14 +567,22 @@ def parse_args():
     p.add_argument("--save_dir",     type=str, default="./checkpoints")
     p.add_argument("--epochs",       type=int, default=100)
     p.add_argument("--batch_size",   type=int, default=16)
-    p.add_argument("--lr",           type=float, default=3e-4)
-    p.add_argument("--wd",           type=float, default=1e-2)
+    p.add_argument("--lr",           type=float, default=1e-3)
+    p.add_argument("--wd",           type=float, default=0.1)
     p.add_argument("--n_subjects",   type=int, default=1)
     p.add_argument("--val_fraction", type=float, default=0.20)
     p.add_argument("--num_workers",  type=int, default=2)
     p.add_argument("--precision",    type=str, default="32",
                    help="e.g. 32, 16-mixed, bf16-mixed")
     p.add_argument("--seed",         type=int, default=42)
+    p.add_argument("--n_parcels",    type=int,   default=400,
+                   help="Teacher vertices to use (400=POC, 20484=full)")
+    p.add_argument("--hidden_dim",   type=int,   default=256)
+    p.add_argument("--num_layers",   type=int,   default=2)
+    p.add_argument("--num_heads",    type=int,   default=4)
+    p.add_argument("--num_experts",  type=int,   default=4)
+    p.add_argument("--dropout",      type=float, default=0.3)
+    p.add_argument("--modality_dropout", type=float, default=0.5)
     p.add_argument("--fast_dev_run", action="store_true",
                    help="Smoke test: 1 batch train + val")
     return p.parse_args()
@@ -569,12 +602,20 @@ def main():
         val_fraction=args.val_fraction,
         num_workers=args.num_workers,
         seed=args.seed,
+        n_parcels=args.n_parcels,
     )
     dm.setup()
 
     # ── Model ─────────────────────────────────────────────────────────────────
     module = TinyTribeKD(
+        n_vertices=args.n_parcels,
         n_subjects=args.n_subjects,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        num_heads=args.num_heads,
+        num_experts=args.num_experts,
+        dropout=args.dropout,
+        modality_dropout=args.modality_dropout,
         lr=args.lr,
         wd=args.wd,
         max_epochs=args.epochs,
