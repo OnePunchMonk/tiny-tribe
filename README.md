@@ -14,6 +14,19 @@ Tiny-TRIBE is trained via knowledge distillation from [TRIBE v2](https://github.
 
 Our v3 model achieves highly competitive prediction accuracy while maintaining a radically smaller parameter footprint compared to the teacher model. 
 
+### Distillation Performance
+The following table summarizes the distillation progress and final alignment with the teacher model (TRIBE v2).
+
+| Metric | POC Value (200 clips) |
+|:---|:---|
+| **Best Pearson r** | **0.7278** |
+| **Convergence Epoch** | 520 |
+| **Initial Alignment** | 0.0328 (Epoch 0) |
+| **Mid-point Alignment** | 0.6158 (Epoch 250) |
+| **Final Alignment** | 0.7278 (Epoch 520) |
+
+> *Note: Pearson r measures the mean per-parcel correlation between student predictions and teacher targets across the 40-clip validation set.*
+
 ### Teacher vs. Student Comparison
 The following table showcases the mean activation patterns (greyish schema) comparing the TRIBE v2 teacher model with our distilled Tiny-TRIBE v3 student.
 
