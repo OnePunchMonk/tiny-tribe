@@ -15,20 +15,16 @@ Tiny-TRIBE is trained via knowledge distillation from [TRIBE v2](https://github.
 Our v3 model achieves highly competitive prediction accuracy while maintaining a radically smaller parameter footprint compared to the teacher model. 
 
 ### Teacher vs. Student Comparison
-| S.No | TRIBE v2 (Teacher) | Tiny-TRIBE v3 (Student) |
-|:---:|:---:|:---:|
-| 1 | <img src="plots/brain_viz_000056_seismic_teacher_vs_student.png" width="400"/> | (Shared Comparison View) |
-| 2 | <img src="plots/brain_viz_000100_seismic_teacher_vs_student.png" width="400"/> | (Shared Comparison View) |
-| 3 | <img src="plots/brain_viz_000105_seismic_teacher_vs_student.png" width="400"/> | (Shared Comparison View) |
-| 4 | <img src="plots/brain_viz_000309_seismic_teacher_vs_student.png" width="400"/> | (Shared Comparison View) |
-| 5 | <img src="plots/brain_viz_000364_seismic_teacher_vs_student.png" width="400"/> | (Shared Comparison View) |
-| 6 | <img src="plots/brain_viz_000402_seismic_teacher_vs_student.png" width="400"/> | (Shared Comparison View) |
+The following table showcases the mean activation patterns (greyish schema) comparing the TRIBE v2 teacher model with our distilled Tiny-TRIBE v3 student.
 
-### Brain Activation Mapping (Seismic Colormap)
-The predicted cortical responses highlight specialized processing regions:
-<div align="center">
-  <img src="plots/brain_viz_000407_seismic_teacher_vs_student.png" alt="Brain Seismic Comparison" width="800"/>
-</div>
+| S.No | Brain Activation (Teacher vs. Student) |
+|:---:|:---:|
+| 1 | <img src="plots/brain_viz_000056_avg_teacher_vs_student.png" width="600"/> |
+| 2 | <img src="plots/brain_viz_000100_avg_teacher_vs_student.png" width="600"/> |
+| 3 | <img src="plots/brain_viz_000105_avg_teacher_vs_student.png" width="600"/> |
+| 4 | <img src="plots/brain_viz_000309_avg_teacher_vs_student.png" width="600"/> |
+| 5 | <img src="plots/brain_viz_000364_avg_teacher_vs_student.png" width="600"/> |
+| 6 | <img src="plots/brain_viz_000402_avg_teacher_vs_student.png" width="600"/> |
 
 ### Training Performance
 <div align="center">
