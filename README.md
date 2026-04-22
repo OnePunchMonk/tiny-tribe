@@ -1,4 +1,4 @@
-# 🧠 Tiny-TRIBE v3
+# 🧠 Tiny-TRIBE
 
 <div align="center">
   <img src="assets/tiny_tribe_v3_architecture.png" alt="Tiny-TRIBE v3 Architecture" width="1000"/>
@@ -10,9 +10,9 @@
 
 Tiny-TRIBE is trained via knowledge distillation from [TRIBE v2](https://github.com/facebookresearch/tribev2), leveraging compact multimodal encoders (~14M trainable parameters) to map audio, visual, and textual features directly to cortical surface predictions (~20k vertices, fsaverage5).
 
-## 📊 V3 Results & Visualizations
+## 📊 Results & Visualizations
 
-Our v3 model achieves highly competitive prediction accuracy while maintaining a radically smaller parameter footprint compared to the teacher model. 
+Our model achieves highly competitive prediction accuracy while maintaining a radically smaller parameter footprint compared to the teacher model. 
 
 ### Distillation Performance
 The following table summarizes the distillation progress and final alignment with the teacher model (TRIBE v2).
@@ -46,7 +46,7 @@ The following table showcases the mean activation patterns (greyish schema) comp
 
 ## 🏗️ Architecture Details
 
-Tiny-TRIBE v3 uses three frozen backbone encoders:
+Tiny-TRIBE uses three frozen backbone encoders:
 - **Text**: `all-MiniLM-L6-v2` (22.7M)
 - **Audio**: `Whisper-Tiny` encoder (39M)
 - **Video**: `MobileViT-S` (5.6M)
@@ -100,7 +100,7 @@ artifact-scripts/    # Experimental, legacy, and artifact scripts
 ## 📚 Documentation & Strategy
 
 - [STRATEGY_C_DEEP_DIVE.md](things-to-read/STRATEGY_C_DEEP_DIVE.md) — Full architecture and training strategy
-- [TRIBE_V3_STRATEGY.md](things-to-read/TRIBE_V3_STRATEGY.md) — v3 design decisions
+- [TRIBE_V3_STRATEGY.md](things-to-read/TRIBE_V3_STRATEGY.md) — design decisions
 - [DISTILLATION_PATTERNS.md](things-to-read/DISTILLATION_PATTERNS.md) — KD training patterns
 - [TINY_TRIBE_ARCHITECTURE.md](things-to-read/TINY_TRIBE_ARCHITECTURE.md) / [TINY_TRIBE_V3_ARCHITECTURE.md](things-to-read/TINY_TRIBE_V3_ARCHITECTURE.md) — Architecture diagrams
 
@@ -128,8 +128,6 @@ artifact-scripts/    # Experimental, legacy, and artifact scripts
   year={2014}
 }
 ```
-
-*Data processed and visualized using [Nilearn](https://nilearn.github.io/) on the fsaverage5 surface mesh.*
 
 ---
 <div align="center">
