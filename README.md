@@ -116,9 +116,9 @@ artifact-scripts/    # Experimental, legacy, and artifact scripts
 
 @article{cinebrain,
   title={CINE Brain Dataset: A Multimodal Naturalistic Video Dataset for Brain Encoding},
-  author={onepunchmonk},
+  author={Jianxiong Gao et al.},
   year={2026},
-  url={https://github.com/onepunchmonk/cine-brain}
+  url={https://arxiv.org/abs/2503.06940}
 }
 
 @article{abraham2014machine,
