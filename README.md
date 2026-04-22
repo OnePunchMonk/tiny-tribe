@@ -121,5 +121,5 @@ If you use Tiny-TRIBE in your research, please consider citing the original TRIB
 
 ---
 <div align="center">
-  Made with ❤️ by the Tiny-TRIBE Research Team.
+  Made with ❤️ by <a href="https://github.com/OnePunchMonk">onepunchmonk</a>
 </div>
