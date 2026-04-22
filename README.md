@@ -1,7 +1,7 @@
 # 🧠 Tiny-TRIBE v3
 
 <div align="center">
-  <img src="assets/tiny_tribe_architecture.png" alt="Tiny-TRIBE Architecture" width="800"/>
+  <img src="assets/tiny_tribe_v3_architecture.png" alt="Tiny-TRIBE v3 Architecture" width="1000"/>
 </div>
 
 <p align="center">
