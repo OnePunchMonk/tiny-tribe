@@ -115,12 +115,12 @@ artifact-scripts/    # Experimental, legacy, and artifact scripts
 }
 
 @article{cinebrain,
-  title={CINE Brain Dataset: A Multimodal Naturalistic Video Dataset for Brain Encoding},
-  author={Jianxiong Gao et al.},
-  year={2026},
+  title={CineBrain: A Large-Scale Multi-Modal Brain Dataset During Naturalistic Audiovisual Narrative Processing},
+  author={Gao, Jianxiong and Liu, Yichang and Yang, Baofeng and Feng, Jianfeng and Fu, Yanwei},
+  journal={arXiv preprint arXiv:2503.06940},
+  year={2025},
   url={https://arxiv.org/abs/2503.06940}
 }
-
 @article{abraham2014machine,
   title={Machine learning for neuroimaging with scikit-learn},
   author={Abraham, Alexandre and others},
