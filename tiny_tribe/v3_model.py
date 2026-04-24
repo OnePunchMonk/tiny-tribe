@@ -496,13 +496,17 @@ class TinyTribeV3(nn.Module):
 
     def _modality_dropout(self, t, a, v, B):
         p = self.modality_dropout
+        device = t.device
+        t = t.clone()
+        a = a.clone()
+        v = v.clone()
         for i in range(B):
-            mask = torch.rand(3) < p
+            mask = torch.rand(3, device=device) < p
             if mask.all():
-                mask[torch.randint(3, (1,))] = False
-            if mask[0]: t = t.clone(); t[i] = 0
-            if mask[1]: a = a.clone(); a[i] = 0
-            if mask[2]: v = v.clone(); v[i] = 0
+                mask[torch.randint(3, (1,), device=device)] = False
+            if mask[0]: t[i] = 0
+            if mask[1]: a[i] = 0
+            if mask[2]: v[i] = 0
         return t, a, v
 
     def set_modality_dropout(self, p: float):

@@ -37,8 +37,8 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingLR
 
-from v3_model import TinyTribeV3
-from v3_dataset import get_dataloaders
+from tiny_tribe.v3_model import TinyTribeV3
+from tiny_tribe.v3_dataset import get_dataloaders
 
 
 # ── Loss Functions ─────────────────────────────────────────────────────────────
@@ -61,6 +61,8 @@ class DistillationLoss(nn.Module):
         w_multires: float = 0.05,
         w_aux:      float = 0.01,
         temperature: float = 2.0,
+        student_dim: int = 512,
+        teacher_dim: int = 1152,
     ):
         super().__init__()
         self.w_output   = w_output
@@ -69,6 +71,8 @@ class DistillationLoss(nn.Module):
         self.w_multires = w_multires
         self.w_aux      = w_aux
         self.T          = temperature
+        # Project student fusion features to teacher feature dim (lazy init)
+        self.feat_proj = nn.LazyLinear(teacher_dim, bias=False)
 
     def output_kd(
         self,
@@ -81,12 +85,26 @@ class DistillationLoss(nn.Module):
 
     def feature_kd(
         self,
-        student_feat: torch.Tensor,   # (B, T, 1152)
-        teacher_feat: torch.Tensor,   # (B, T, 1152)
+        student_feat: torch.Tensor,   # (B, T, D_student)
+        teacher_feat: torch.Tensor,   # (B, T, D_teacher)
     ) -> torch.Tensor:
-        """Cosine similarity in feature space — teacher layer 4 vs student fusion."""
+        """Cosine similarity in feature space — teacher layer 4 vs student fusion.
+        
+        If dimensions don't match, projects student to teacher dim first.
+        """
+        if student_feat is None or teacher_feat is None:
+            return torch.tensor(0.0, device=student_feat.device if student_feat is not None else 'cpu')
+        B, T_s, D_s = student_feat.shape
+        _, T_t, D_t = teacher_feat.shape
+        # Flatten batch+time for linear projection if needed
+        s = student_feat.reshape(B * T_s, D_s)
+        if D_s != D_t:
+            s = self.feat_proj(s)  # (B*T_s, D_t)
+            s = s.reshape(B, T_s, D_t)
+        else:
+            s = s.reshape(B, T_s, D_t)
         # Normalise along feature dim
-        s = F.normalize(student_feat, dim=-1)
+        s = F.normalize(s, dim=-1)
         t = F.normalize(teacher_feat, dim=-1)
         return 1.0 - (s * t).sum(dim=-1).mean()
 
@@ -159,6 +177,8 @@ class FMRILoss(nn.Module):
         w_feature:  float = 0.10,
         w_temporal: float = 0.10,
         w_aux:      float = 0.01,
+        student_dim: int = 512,
+        teacher_dim: int = 1152,
     ):
         super().__init__()
         self.w_fmri    = w_fmri
@@ -166,6 +186,7 @@ class FMRILoss(nn.Module):
         self.w_feature = w_feature
         self.w_temporal= w_temporal
         self.w_aux     = w_aux
+        self.feat_proj = nn.LazyLinear(teacher_dim, bias=False)
 
     def pearson_loss(
         self,
@@ -195,7 +216,17 @@ class FMRILoss(nn.Module):
         student_feat: torch.Tensor,
         teacher_feat: torch.Tensor,
     ) -> torch.Tensor:
-        s = F.normalize(student_feat, dim=-1)
+        if student_feat is None or teacher_feat is None:
+            return torch.tensor(0.0, device=student_feat.device if student_feat is not None else 'cpu')
+        B, T_s, D_s = student_feat.shape
+        _, T_t, D_t = teacher_feat.shape
+        s = student_feat.reshape(B * T_s, D_s)
+        if D_s != D_t:
+            s = self.feat_proj(s)
+            s = s.reshape(B, T_s, D_t)
+        else:
+            s = s.reshape(B, T_s, D_t)
+        s = F.normalize(s, dim=-1)
         t = F.normalize(teacher_feat, dim=-1)
         return 1.0 - (s * t).sum(dim=-1).mean()
 
@@ -261,8 +292,9 @@ def evaluate(
         video = batch["video"].to(device)
         subj  = batch["subject_id"].to(device)
 
-        out = model(text, audio, video, subj, modality_dropout_p=0.0)
-        pred = out["predictions"]   # (B, T, n_v)
+        model.set_modality_dropout(0.0)
+        out = model(text, audio, video, subj)
+        pred = out["prediction"]   # (B, n_v, T)
 
         if mode == "fmri" and "fmri" in batch:
             target = batch["fmri"].to(device)
@@ -272,9 +304,10 @@ def evaluate(
             continue
 
         # Align T if mismatch (HRF conv may change length)
-        T_min = min(pred.shape[1], target.shape[1])
-        pred   = pred[:, :T_min]
-        target = target[:, :T_min]
+        # pred: (B, n_v, T), target: (B, T, n_v)
+        T_min = min(pred.shape[2], target.shape[1])
+        pred   = pred[:, :, :T_min]
+        target = target[:, :T_min, :].transpose(1, 2)  # (B, n_v, T)
 
         total_loss += F.mse_loss(pred, target).item()
         all_pred.append(pred.cpu())
@@ -284,13 +317,13 @@ def evaluate(
     if not all_pred:
         return {"pearson_r": 0.0, "mse": float("inf")}
 
-    preds   = torch.cat(all_pred,   dim=0)   # (N, T, V)
+    preds   = torch.cat(all_pred,   dim=0)   # (N, n_v, T)
     targets = torch.cat(all_target, dim=0)
 
     # Pearson r per vertex, averaged
-    B, T, V = preds.shape
-    p = preds.reshape(B * T, V)
-    t = targets.reshape(B * T, V)
+    N, V, T = preds.shape
+    p = preds.permute(1, 0, 2).reshape(V, N * T)
+    t = targets.permute(1, 0, 2).reshape(V, N * T)
 
     p = p - p.mean(dim=0, keepdim=True)
     t = t - t.mean(dim=0, keepdim=True)
@@ -433,20 +466,21 @@ def train_phase2(
                 teacher_feat = teacher_feat.to(device)
 
             with torch.cuda.amp.autocast(enabled=use_amp):
-                out  = model(text, audio, video, subj, modality_dropout_p=0.3)
-                pred = out["predictions"]          # (B, T, n_v)
+                model.set_modality_dropout(0.3)
+                out  = model(text, audio, video, subj)
+                pred = out["prediction"]          # (B, n_v, T)
                 aux  = out["aux_loss"]
 
-                # Align temporal dimension
-                T_min   = min(pred.shape[1], teacher.shape[1])
-                pred_t  = pred[:, :T_min]
-                teach_t = teacher[:, :T_min]
+                # Align temporal dimension (model output: B,n_v,T; teacher: B,T,n_v)
+                T_min   = min(pred.shape[2], teacher.shape[1])
+                pred_t  = pred[:, :, :T_min]
+                teach_t = teacher[:, :T_min, :].transpose(1, 2)  # (B, n_v, T)
 
-                student_feat = out.get("fusion_features")
+                student_feat = out.get("fusion_feat")
                 if student_feat is not None:
-                    student_feat = student_feat[:, :T_min]
+                    student_feat = student_feat[:, :T_min, :]
                 if teacher_feat is not None:
-                    teacher_feat = teacher_feat[:, :T_min]
+                    teacher_feat = teacher_feat[:, :T_min, :]
 
                 losses = criterion(
                     pred_t, teach_t, aux,
@@ -588,23 +622,24 @@ def train_phase3(
                 teacher_feat = teacher_feat.to(device)
 
             with torch.cuda.amp.autocast(enabled=use_amp):
-                out  = model(text, audio, video, subj, modality_dropout_p=0.1)
-                pred = out["predictions"]
+                model.set_modality_dropout(0.1)
+                out  = model(text, audio, video, subj)
+                pred = out["prediction"]
                 aux  = out["aux_loss"]
 
-                T_min = min(pred.shape[1], fmri.shape[1])
-                pred_t  = pred[:, :T_min]
-                fmri_t  = fmri[:, :T_min]
+                T_min = min(pred.shape[2], fmri.shape[1])
+                pred_t  = pred[:, :, :T_min]
+                fmri_t  = fmri[:, :T_min, :].transpose(1, 2)  # (B, n_v, T)
 
                 teacher_t = None
                 if teacher_pred is not None:
-                    teacher_t = teacher_pred[:, :T_min]
+                    teacher_t = teacher_pred[:, :T_min, :].transpose(1, 2)
 
-                student_feat = out.get("fusion_features")
+                student_feat = out.get("fusion_feat")
                 if student_feat is not None:
-                    student_feat = student_feat[:, :T_min]
+                    student_feat = student_feat[:, :T_min, :]
                 if teacher_feat is not None:
-                    teacher_feat = teacher_feat[:, :T_min]
+                    teacher_feat = teacher_feat[:, :T_min, :]
 
                 losses = criterion(
                     pred_t, fmri_t, aux,
@@ -712,13 +747,13 @@ def run_smoke_test(args):
     model = TinyTribeV3(
         n_vertices=n_vertices,
         n_subjects=args.n_subjects,
-        dim=args.dim,
-        depth=args.depth,
-        heads=args.heads,
+        hidden_dim=args.dim,
+        num_layers=args.depth,
+        num_heads=args.heads,
         ff_mult=args.ff_mult,
         num_experts=args.num_experts,
         top_k=args.top_k,
-        seq_len=args.seq_len,
+        max_seq_len=args.seq_len,
         stoch_depth_max=args.stoch_depth_max,
     ).to(device)
 
